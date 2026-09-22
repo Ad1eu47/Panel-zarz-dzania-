@@ -1,0 +1,9 @@
+DISCORD_CLIENT_ID=
+DISCORD_CLIENT_SECRET=
+DISCORD_REDIRECT_URI=http://localhost:8787/auth/discord/callback
+DISCORD_WEBHOOK_URL=
+ADMIN_DISCORD_ID=
+SESSION_SECRET=replace-with-long-random-string
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:you@example.com

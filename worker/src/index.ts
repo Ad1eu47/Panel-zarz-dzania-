@@ -11,6 +11,30 @@ const webhookFor=(env:Env,category?:string)=>category==='Lombard'?env.DISCORD_WE
 async function discordSend(env:Env,content:string,webhook?:string){const url=webhook||env.DISCORD_WEBHOOK_URL;if(!url)return null;const r=await fetch(url+'?wait=true',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({content,allowed_mentions:{parse:['roles']}})});if(!r.ok)throw new Error('Discord '+r.status);return await r.json<any>()}
 async function discordDelete(env:Env,id?:string,webhook?:string){const url=webhook||env.DISCORD_WEBHOOK_URL;if(!id||!url)return;await fetch(url+'/messages/'+id,{method:'DELETE'}).catch(()=>{})}
 async function pushAll(env:Env,title:string,bodyText:string){if(!env.VAPID_PUBLIC_KEY||!env.VAPID_PRIVATE_KEY)return;webpush.setVapidDetails(env.VAPID_SUBJECT,env.VAPID_PUBLIC_KEY,env.VAPID_PRIVATE_KEY);const {results}=await env.DB.prepare("SELECT * FROM push_subscriptions").all<any>();for(const s of results){try{await webpush.sendNotification({endpoint:s.endpoint,keys:{p256dh:s.p256dh,auth:s.auth}},JSON.stringify({title,body:bodyText,url:env.APP_URL}))}catch(e:any){if(e?.statusCode===404||e?.statusCode===410)await env.DB.prepare("DELETE FROM push_subscriptions WHERE id=?").bind(s.id).run()}}}
+function zonedEpoch(value:string,timeZone:string){
+ if(!value)return NaN;
+ if(/[zZ]$|[+-]\d{2}:?\d{2}$/.test(value))return new Date(value).getTime();
+ const m=String(value).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+ if(!m)return new Date(value).getTime();
+ const base=Date.UTC(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+(m[6]||0));
+ let instant=base;
+ for(let i=0;i<2;i++){
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(instant));
+  const get=(t:string)=>Number(parts.find(p=>p.type===t)?.value||0);
+  const rendered=Date.UTC(get('year'),get('month')-1,get('day'),get('hour'),get('minute'),get('second'));
+  instant=base-(rendered-instant)
+ }
+ return instant
+}
+function formatInZone(value:string,timeZone:string){
+ const ts=zonedEpoch(value,timeZone);
+ if(!Number.isFinite(ts))return value;
+ return new Intl.DateTimeFormat('pl-PL',{timeZone,day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(ts))
+}
+function takeoverWarning(category?:string){
+ const label=category==='Pole'?'pole':category==='Zagroda'?'zagrodę':category==='Lombard'?'lombard':category==='LS Motors'?'salon':category==='Mechanik'?'warsztat':'obiekt';
+ return '⚠️ **BRAK PRZEDŁUŻENIA = RYZYKO UTRATY**\\nPo upływie terminu inny gracz może przejąć '+label+'.'
+}
 async function ensureEventSettings(env:Env){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS calendar_event_settings(event_id INTEGER PRIMARY KEY,notification_category TEXT,reminder_hours TEXT NOT NULL DEFAULT '72,24,12,6,1',discord_role_id TEXT,enabled INTEGER NOT NULL DEFAULT 0,last_threshold INTEGER,discord_message_id TEXT,updated_at TEXT DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(event_id) REFERENCES calendar_events(id))").run()
 }
@@ -20,10 +44,12 @@ function normalizeHours(value:any){
 }
 async function alerts(env:Env){
  await ensureEventSettings(env);
- const {results}=await env.DB.prepare("SELECT a.*,s.last_threshold,s.discord_message_id FROM assets a LEFT JOIN alert_state s ON s.asset_id=a.id WHERE a.active=1 AND a.deleted_at IS NULL AND datetime(a.expires_at)>datetime('now')").all<any>();
+ const {results}=await env.DB.prepare("SELECT a.*,s.last_threshold,s.discord_message_id FROM assets a LEFT JOIN alert_state s ON s.asset_id=a.id WHERE a.active=1 AND a.deleted_at IS NULL").all<any>();
  const hs=env.ALERT_HOURS.split(',').map(Number).filter(Boolean).sort((a,b)=>b-a);
  for(const a of results){
-  const left=(new Date(a.expires_at).getTime()-Date.now())/36e5;
+  const expires=zonedEpoch(a.expires_at,env.TIMEZONE||'Europe/Warsaw');
+  if(!Number.isFinite(expires)||expires<=Date.now())continue;
+  const left=(expires-Date.now())/36e5;
   const th=[...hs].reverse().find(h=>left<=h);
   if(th==null||a.last_threshold===th)continue;
   const hook=webhookFor(env,a.category);
@@ -32,14 +58,16 @@ async function alerts(env:Env){
   const text=role+'⏳ **'+a.name+'** wygasa za około **'+th+'h**.\\nTermin: '+new Date(a.expires_at).toLocaleString('pl-PL',{timeZone:env.TIMEZONE});
   const msg=await discordSend(env,text,hook);
   await env.DB.prepare("INSERT INTO alert_state(asset_id,last_threshold,discord_message_id,last_sent_at) VALUES(?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(asset_id) DO UPDATE SET last_threshold=excluded.last_threshold,discord_message_id=excluded.discord_message_id,last_sent_at=CURRENT_TIMESTAMP").bind(a.id,th,msg?.id||null).run();
-  await env.DB.prepare("INSERT INTO notifications(title,body) VALUES(?,?)").bind(a.name,'Termin za około '+th+'h').run();
-  await pushAll(env,a.name,'Termin wygasa za około '+th+'h')
+  await env.DB.prepare("INSERT INTO notifications(title,body) VALUES(?,?)").bind(a.name,'Termin za około '+th+'h. Brak przedłużenia grozi utratą.').run();
+  await pushAll(env,a.name,'Zostało około '+th+'h. Brak przedłużenia może oznaczać przejęcie przez innego gracza.')
  }
 
- const ev=await env.DB.prepare("SELECT e.id,e.title,e.starts_at,s.notification_category,s.reminder_hours,s.discord_role_id,s.enabled,s.last_threshold,s.discord_message_id FROM calendar_events e JOIN calendar_event_settings s ON s.event_id=e.id WHERE e.deleted_at IS NULL AND s.enabled=1 AND datetime(e.starts_at)>datetime('now')").all<any>();
+ const ev=await env.DB.prepare("SELECT e.id,e.title,e.starts_at,s.notification_category,s.reminder_hours,s.discord_role_id,s.enabled,s.last_threshold,s.discord_message_id FROM calendar_events e JOIN calendar_event_settings s ON s.event_id=e.id WHERE e.deleted_at IS NULL AND s.enabled=1").all<any>();
  for(const e of ev.results){
   const hours=normalizeHours(e.reminder_hours).split(',').map(Number);
-  const left=(new Date(e.starts_at).getTime()-Date.now())/36e5;
+  const starts=zonedEpoch(e.starts_at,env.TIMEZONE||'Europe/Warsaw');
+  if(!Number.isFinite(starts)||starts<=Date.now())continue;
+  const left=(starts-Date.now())/36e5;
   const th=[...hours].reverse().find((h:number)=>left<=h);
   if(th==null||e.last_threshold===th)continue;
   const hook=webhookFor(env,e.notification_category);

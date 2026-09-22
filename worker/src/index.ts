@@ -1,6 +1,7 @@
 import webpush from 'web-push';
 export interface Env{DB:D1Database;DOCS:R2Bucket;APP_URL:string;TIMEZONE:string;ALERT_HOURS:string;DISCORD_CLIENT_ID:string;DISCORD_CLIENT_SECRET:string;DISCORD_REDIRECT_URI:string;DISCORD_WEBHOOK_URL:string;ADMIN_DISCORD_ID:string;SESSION_SECRET:string;VAPID_PUBLIC_KEY:string;VAPID_PRIVATE_KEY:string;VAPID_SUBJECT:string}
-const security={'x-content-type-options':'nosniff','referrer-policy':'no-referrer','permissions-policy':'geolocation=(), camera=(), microphone=()','cache-control':'no-store'};\nconst json=(data:any,status=200,headers={})=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json;charset=utf-8',...security,...headers}});
+const security={'x-content-type-options':'nosniff','referrer-policy':'no-referrer','permissions-policy':'geolocation=(), camera=(), microphone=()','cache-control':'no-store'};
+const json=(data:any,status=200,headers={})=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json;charset=utf-8',...security,...headers}});
 const cors=(env:Env)=>({'access-control-allow-origin':env.APP_URL,'access-control-allow-credentials':'true','access-control-allow-headers':'content-type','access-control-allow-methods':'GET,POST,PUT,DELETE,OPTIONS'});
 const token=()=>crypto.randomUUID()+crypto.randomUUID();
 async function me(req:Request,env:Env){const t=(req.headers.get('cookie')||'').match(/am_session=([^;]+)/)?.[1];if(!t)return null;return await env.DB.prepare("SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>datetime('now')").bind(t).first<any>()}

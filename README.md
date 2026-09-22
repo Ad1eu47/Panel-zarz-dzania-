@@ -1,6 +1,6 @@
-# Arabic Management
+# Holdings Management
 
-Gotowy panel Arabic Holdings: Discord OAuth, terminy i przedłużenia, koszty, alerty Discord, PWA/Web Push, pieniądze, kalendarz z własnymi wpisami, LS Motors, dokumenty R2, karty graczy po CID, eksport i log aktywności.
+Gotowy panel Holdings Panel: Discord OAuth, terminy i przedłużenia, koszty, alerty Discord, PWA/Web Push, pieniądze, kalendarz z własnymi wpisami, LS Motors, dokumenty R2, karty graczy po CID, eksport i log aktywności.
 
 ## 1. Cloudflare
 
@@ -12,13 +12,13 @@ npx wrangler login
 
 Utwórz D1:
 ```bash
-npx wrangler d1 create arabic-management
+npx wrangler d1 create holdings-panel
 ```
 Skopiuj zwrócone `database_id` do `worker/wrangler.jsonc` zamiast `PUT_D1_DATABASE_ID_HERE`.
 
 Utwórz prywatny bucket dokumentów:
 ```bash
-npx wrangler r2 bucket create arabic-management-docs
+npx wrangler r2 bucket create holdings-panel-docs
 ```
 
 Wgraj schemat:
@@ -76,7 +76,7 @@ npm run worker:deploy
 ```
 
 Zapisz adres w stylu:
-`https://arabic-management-api.TWOJ-SUBDOMAIN.workers.dev`
+`https://holdings-panel-api.TWOJ-SUBDOMAIN.workers.dev`
 
 W `worker/wrangler.jsonc` ustaw `APP_URL` na docelowy adres frontendu Cloudflare Pages i ponownie wykonaj deploy.
 
